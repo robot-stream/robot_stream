@@ -1,0 +1,23 @@
+name: robot_stream_core
+description: Pure-Dart core models, interfaces, and TLS certificate pinning helpers for robot_stream ROS 2 video and telemetry packages.
+version: 0.1.0
+repository: https://github.com/robot-stream/robot_stream/tree/main/packages/robot_stream_core
+issue_tracker: https://github.com/robot-stream/robot_stream/issues
+resolution: workspace
+
+topics:
+  - ros
+  - ros2
+  - robotics
+  - webrtc
+  - mjpeg
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  crypto: ^3.0.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

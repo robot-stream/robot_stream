@@ -1,0 +1,28 @@
+name: robot_stream_mjpeg
+description: HTTP MJPEG video source and Flutter widget for ROS 2 web_video_server streams with automatic reconnect and stall detection.
+version: 0.1.0
+repository: https://github.com/robot-stream/robot_stream/tree/main/packages/robot_stream_mjpeg
+issue_tracker: https://github.com/robot-stream/robot_stream/issues
+resolution: workspace
+
+topics:
+  - ros
+  - ros2
+  - robotics
+  - mjpeg
+  - video
+
+environment:
+  sdk: ^3.8.1
+  flutter: ">=3.32.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  robot_stream_core: ^0.1.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter

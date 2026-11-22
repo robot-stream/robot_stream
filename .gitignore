@@ -1,0 +1,18 @@
+.dart_tool/
+build/
+pubspec_overrides.yaml
+.idea/
+*.iml
+.DS_Store
+
+# ~/.gitignore_global có `*.dart` – repo này cần commit code Dart.
+!*.dart
+
+# Python
+__pycache__/
+*.pyc
+
+# Flutter tự sinh, phụ thuộc máy
+.flutter-plugins-dependencies
+.flutter-plugins
+pubspec.lock

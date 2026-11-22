@@ -1,0 +1,24 @@
+name: robot_stream_rosbridge
+description: Pure-Dart ROS 2 telemetry, Nav2 navigation, teleoperation, and deadman heartbeat client over rosbridge v2 WebSockets.
+version: 0.1.0
+repository: https://github.com/robot-stream/robot_stream/tree/main/packages/robot_stream_rosbridge
+issue_tracker: https://github.com/robot-stream/robot_stream/issues
+resolution: workspace
+
+topics:
+  - ros
+  - ros2
+  - robotics
+  - rosbridge
+  - nav2
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  robot_stream_core: ^0.1.0
+  web_socket_channel: ^3.0.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

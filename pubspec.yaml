@@ -1,0 +1,27 @@
+name: robot_stream_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.8.1
+
+workspace:
+  - packages/robot_stream_core
+  - packages/robot_stream_mjpeg
+  - packages/robot_stream_webrtc
+  - packages/robot_stream_rosbridge
+  - apps/example
+
+dev_dependencies:
+  melos: ^7.0.0
+
+melos:
+  scripts:
+    analyze:
+      run: dart run melos exec -- flutter analyze .
+      description: Run static analysis across all packages.
+    test:
+      run: dart run melos exec --dir-exists=test -- flutter test
+      description: Run tests in all packages that have a test directory.
+    example:
+      run: cd apps/example && flutter run
+      description: Run the example app.

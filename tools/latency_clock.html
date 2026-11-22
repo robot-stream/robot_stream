@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Đo latency camera</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #15181d; --text: #e8eaed; --muted: #8a919c;
+    --line: #2a2f37; --accent: #3ddc97; --warn: #ffb020; --bad: #ff5d5d;
+    /* Nền trắng: màn hình tối làm camera tự phơi sáng lâu → FPS tụt (Astra xuống < 5 fps). */
+    --clock-bg: #fff; --clock-fg: #000;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  input, select, button {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+  }
+  input[type=text] { width: 130px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #04140c; border-color: var(--accent); font-weight: 600; }
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px; padding: 16px;
+  }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+  .card h2 { font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 8px; }
+  #clock {
+    background: var(--clock-bg); color: var(--clock-fg); border-radius: 8px;
+    font: 700 clamp(56px, 11vw, 160px)/1 ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums; text-align: center; padding: 28px 8px;
+    letter-spacing: 0.02em;
+  }
+  [hidden] { display: none !important; }
+  #stream, #video, #snapshot { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 8px; display: block; object-fit: contain; }
+  /* Ảnh chụp có thể là 2 ảnh xếp chồng: giữ tỉ lệ thật, không ép 4:3. */
+  #snapshot { aspect-ratio: auto; height: auto; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .stat { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 84px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td button { padding: 1px 6px; font-size: 12px; }
+  #status { font-size: 12px; }
+  .ok { color: var(--accent); } .err { color: var(--bad); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Đo latency camera R550</h1>
+  <label>IP <input id="ip" type="text" value="192.168.1.100"></label>
+  <label>Nguồn
+    <select id="transport">
+      <option value="mjpeg">MJPEG (:8080)</option>
+      <option value="webrtc">WebRTC/WHEP (:8889)</option>
+      <option value="both">So sánh MJPEG + WebRTC</option>
+    </select>
+  </label>
+  <label class="mjpeg-only">Topic
+    <select id="topic">
+      <option value="/camera/color/image_raw">Ảnh gốc</option>
+      <option value="/detected_image">Có khung YOLO</option>
+    </select>
+  </label>
+  <label class="mjpeg-only"><input id="low" type="checkbox" checked> Giảm tải (640x480, q50)</label>
+  <label class="webrtc-only" title="RTCRtpReceiver.jitterBufferTarget = 0: Chrome giữ frame ít nhất có thể">
+    <input id="minJb" type="checkbox"> Jitter buffer tối thiểu</label>
+  <button id="reload">Mở luồng</button>
+  <span id="status"></span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Quay camera robot vào đồng hồ này</h2>
+    <div id="clock">00.000</div>
+    <p class="hint">Giây.mili giây (lặp lại mỗi 100 s). Phóng to cửa sổ, tắt Night Shift/True Tone để chữ rõ.
+      Để độ sáng màn hình tối đa và bật đèn phòng: cảnh tối làm camera phơi sáng lâu, FPS tụt, latency đo sai.</p>
+
+    <h2 style="margin-top:16px">3. Ảnh vừa chụp – đọc số đồng hồ trong ảnh</h2>
+    <canvas id="snapshot" width="640" height="480"></canvas>
+    <div class="row">
+      <label>Giờ lúc chụp <b id="capturedAt">–</b></label>
+      <label><span id="seenLabel">Số đồng hồ trong ảnh</span> <input id="seen" type="text" inputmode="decimal" placeholder="số nhìn thấy trong ảnh" disabled></label>
+      <label id="seen2Wrap" hidden><span id="seen2Label">WebRTC</span> <input id="seen2" type="text" inputmode="decimal" placeholder="số trong ảnh dưới" disabled></label>
+      <button id="add" class="primary" disabled>Lưu (Enter)</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. Luồng từ robot – bấm <b>Space</b> để chụp</h2>
+    <img id="stream" alt="Luồng MJPEG từ robot">
+    <video id="video" autoplay muted playsinline hidden></video>
+    <p class="hint" id="rtcStats"></p>
+    <div class="row">
+      <button id="capture" class="primary">Chụp (Space)</button>
+      <button id="clear">Xóa kết quả</button>
+      <button id="copy">Copy kết quả</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><span>Số lần</span><b id="sN">0</b></div>
+      <div class="stat"><span>Trung vị</span><b id="sMed">–</b></div>
+      <div class="stat"><span>Trung bình</span><b id="sAvg">–</b></div>
+      <div class="stat"><span>Min</span><b id="sMin">–</b></div>
+      <div class="stat"><span>Max</span><b id="sMax">–</b></div>
+    </div>
+    <p class="hint" id="bySource"></p>
+    <table>
+      <thead><tr><th>#</th><th>Nguồn</th><th>Lúc chụp</th><th>Trong ảnh</th><th>Latency</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="hint">
+      Latency = giờ lúc chụp − số đọc trong ảnh. Gồm: camera + USB + ROS + nén (JPEG/H.264) + Wifi + giải mã trong Chrome.
+      Chưa gồm thời gian màn hình hiển thị khung video (~1 khung, ≈16 ms ở 60 Hz).
+    </p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const clockEl = $('clock'), img = $('stream'), canvas = $('snapshot'), ctx = canvas.getContext('2d');
+const PERIOD = 100000; // đồng hồ lặp mỗi 100 s
+
+const now = () => performance.timeOrigin + performance.now();
+const fmt = (ms) => {
+  const t = ((ms % PERIOD) + PERIOD) % PERIOD;
+  return (t / 1000).toFixed(3).padStart(6, '0');
+};
+
+(function tick() {
+  clockEl.textContent = fmt(now());
+  requestAnimationFrame(tick);
+})();
+
+function streamUrl() {
+  const ip = $('ip').value.trim();
+  // web_video_server không giải mã %2F – giữ nguyên dấu / trong topic.
+  let q = `topic=${$('topic').value}&type=mjpeg`;
+  if ($('low').checked) q += '&quality=50&width=640&height=480';
+  return `http://${ip}:8080/stream?${q}`;
+}
+
+const video = $('video');
+// 'both': mở cả hai luồng, mỗi lần chụp lấy cùng lúc → hiệu số không phụ thuộc camera.
+const isWebrtc = () => $('transport').value !== 'mjpeg';
+const wantMjpeg = () => $('transport').value !== 'webrtc';
+const webrtcLabel = () => `WebRTC${$('minJb').checked ? ' · jb 0' : ''}`;
+const mjpegLabel = () => `MJPEG · ${$('topic').selectedOptions[0].text}`;
+
+function openStream() {
+  closeWebrtc();
+  // removeAttribute thay vì src='' – gán rỗng làm img bắn onerror giả.
+  img.removeAttribute('src');
+  const rtc = isWebrtc(), mj = wantMjpeg();
+  img.hidden = !mj; video.hidden = !rtc;
+  document.querySelectorAll('.mjpeg-only').forEach((el) => { el.hidden = !mj; });
+  document.querySelectorAll('.webrtc-only').forEach((el) => { el.hidden = !rtc; });
+  setStatus('Đang mở…', '');
+  if (mj) img.src = streamUrl();
+  if (rtc) openWebrtc().catch((e) => retryWebrtc(`WebRTC lỗi: ${e.message}`));
+}
+img.onload = () => setStatus('Đang phát', 'ok');
+
+// --- WebRTC/WHEP (MediaMTX: POST SDP offer → 201 + SDP answer) ---
+let pc = null, whepSession = null, statsTimer = null;
+
+async function openWebrtc() {
+  const url = `http://${$('ip').value.trim()}:8889/robot_cam/whep`;
+  pc = new RTCPeerConnection();
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.ontrack = (e) => {
+    if ($('minJb').checked) {
+      // ms theo spec; playoutDelayHint (giây) là tên cũ trong Chrome.
+      if ('jitterBufferTarget' in e.receiver) e.receiver.jitterBufferTarget = 0;
+      if ('playoutDelayHint' in e.receiver) e.receiver.playoutDelayHint = 0;
+    }
+    video.srcObject = e.streams[0] || new MediaStream([e.track]);
+  };
+  pc.onconnectionstatechange = () => {
+    const s = pc && pc.connectionState;
+    if (s === 'connected') setStatus('Đang phát (WebRTC)', 'ok');
+    if (s === 'failed') retryWebrtc('WebRTC failed');
+    // 'disconnected' thường tự hồi trên Wifi: chỉ kết nối lại nếu sau 3 s vẫn chưa hồi.
+    if (s === 'disconnected') {
+      const cur = pc;
+      setTimeout(() => {
+        if (pc === cur && pc.connectionState === 'disconnected') retryWebrtc('WebRTC disconnected');
+      }, 3000);
+    }
+  };
+  await pc.setLocalDescription(await pc.createOffer());
+  // Chờ gom ICE (tối đa 2 s) để gửi một lần, không cần trickle.
+  await new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    const t = setTimeout(resolve, 2000);
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') { clearTimeout(t); resolve(); }
+    };
+  });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/sdp' },
+    body: pc.localDescription.sdp,
+  });
+  // 404: robot chưa có luồng (camera / stream_node chưa chạy).
+  if (res.status !== 201) throw new Error(`WHEP HTTP ${res.status}${res.status === 404 ? ' – robot chưa có luồng' : ''}`);
+  const loc = res.headers.get('Location');
+  whepSession = loc ? new URL(loc, url).toString() : null;
+  await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
+  statsTimer = setInterval(showRtcStats, 1000);
+}
+
+// Lỗi thì thử lại sau 2 s, cho tới khi người dùng đổi sang MJPEG.
+let retryTimer = null;
+function retryWebrtc(reason) {
+  setStatus(`${reason} – thử lại sau 2 s`, 'err');
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => { if (isWebrtc()) openStream(); }, 2000);
+}
+
+let lastBytes = 0, lastTs = 0;
+async function showRtcStats() {
+  if (!pc) return;
+  const report = await pc.getStats();
+  report.forEach((s) => {
+    if (s.type !== 'inbound-rtp' || s.kind !== 'video') return;
+    const kbps = lastTs ? ((s.bytesReceived - lastBytes) * 8) / (s.timestamp - lastTs) : 0;
+    lastBytes = s.bytesReceived; lastTs = s.timestamp;
+    const jb = s.jitterBufferEmittedCount
+      ? (1000 * s.jitterBufferDelay / s.jitterBufferEmittedCount).toFixed(0) : '–';
+    $('rtcStats').textContent =
+      `${(s.framesPerSecond || 0).toFixed(1)} fps · ${(kbps / 1000).toFixed(2)} Mbps · ` +
+      `jitter buffer ${jb} ms · mất ${s.packetsLost || 0} gói · ${s.frameWidth || '?'}x${s.frameHeight || '?'}`;
+  });
+}
+
+function closeWebrtc() {
+  clearTimeout(retryTimer);
+  clearInterval(statsTimer); statsTimer = null; lastBytes = lastTs = 0;
+  $('rtcStats').textContent = '';
+  if (whepSession) fetch(whepSession, { method: 'DELETE' }).catch(() => {});
+  whepSession = null;
+  if (pc) pc.close();
+  pc = null;
+  video.srcObject = null;
+}
+window.addEventListener('beforeunload', closeWebrtc);
+img.onerror = () => {
+  if (wantMjpeg() && img.getAttribute('src')) setStatus('Không mở được luồng MJPEG – kiểm tra IP / robot', 'err');
+};
+function setStatus(text, cls) { const s = $('status'); s.textContent = text; s.className = cls; }
+
+let pending = null; // { at, labels: [nhãn theo thứ tự trái → phải] }
+function capture() {
+  const srcs = [];
+  if (wantMjpeg()) srcs.push({ el: img, w: img.naturalWidth, h: img.naturalHeight, label: mjpegLabel() });
+  if (isWebrtc()) srcs.push({ el: video, w: video.videoWidth, h: video.videoHeight, label: webrtcLabel() });
+  if (srcs.some((s) => !s.w)) { setStatus('Chưa có hình để chụp', 'err'); return; }
+  const at = now();
+  // Vẽ các nguồn chồng trên – dưới trong cùng một lần chụp (mỗi ảnh đủ chiều rộng, số dễ đọc).
+  canvas.width = Math.max(...srcs.map((s) => s.w));
+  canvas.height = srcs.reduce((a, s) => a + s.h, 0);
+  let y = 0;
+  for (const s of srcs) {
+    ctx.drawImage(s.el, 0, y, s.w, s.h);
+    ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(0, y, 170, 34);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(s.label.split(' ·')[0], 10, y + 25);
+    y += s.h;
+  }
+  pending = { at, labels: srcs.map((s) => s.label) };
+  $('capturedAt').textContent = fmt(at);
+  const two = srcs.length === 2;
+  $('seenLabel').textContent = two ? 'MJPEG (trên)' : 'Số đồng hồ trong ảnh';
+  $('seen2Wrap').hidden = !two;
+  $('seen2Label').textContent = 'WebRTC (dưới)';
+  for (const id of ['seen', 'seen2']) { $(id).disabled = id === 'seen2' && !two; $(id).value = ''; }
+  $('add').disabled = false;
+  $('seen').focus();
+}
+
+const results = [];
+function addResult() {
+  if (!pending) return;
+  const capturedS = (((pending.at % PERIOD) + PERIOD) % PERIOD) / 1000;
+  const rows = [];
+  for (const [i, label] of pending.labels.entries()) {
+    const input = $(i === 0 ? 'seen' : 'seen2');
+    const seen = parseFloat(input.value.replace(',', '.'));
+    if (!Number.isFinite(seen)) { input.focus(); return; }
+    let lat = (capturedS - seen) * 1000;
+    if (lat < 0) lat += PERIOD; // qua mốc 100 s
+    if (lat > 10000) { setStatus('Latency > 10 s – đọc nhầm số?', 'err'); input.select(); return; }
+    if (lat < 20) {
+      setStatus('Gần bằng giờ lúc chụp – hãy nhập số đồng hồ NHÌN THẤY TRONG ẢNH', 'err');
+      input.select();
+      return;
+    }
+    rows.push({ topic: label, at: fmt(pending.at), seen: seen.toFixed(3), lat });
+  }
+  results.push(...rows);
+  pending = null;
+  for (const id of ['seen', 'seen2']) { $(id).disabled = true; $(id).blur(); }
+  $('add').disabled = true;
+  render();
+}
+
+function render() {
+  $('rows').innerHTML = results.map((r, i) =>
+    `<tr><td>${i + 1}</td><td>${r.topic}</td><td>${r.at}</td><td>${r.seen}</td>` +
+    `<td><b>${r.lat.toFixed(0)} ms</b></td><td><button data-i="${i}">✕</button></td></tr>`
+  ).join('');
+  const v = results.map((r) => r.lat).sort((a, b) => a - b);
+  const n = v.length;
+  $('sN').textContent = n;
+  const ms = (x) => n ? `${x.toFixed(0)} ms` : '–';
+  $('sMed').textContent = ms(n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2);
+  $('sAvg').textContent = ms(v.reduce((a, b) => a + b, 0) / (n || 1));
+  $('sMin').textContent = ms(v[0]);
+  $('sMax').textContent = ms(v[n - 1]);
+
+  // Trung vị theo từng nguồn, và chênh lệch WebRTC − MJPEG của các lần chụp chung.
+  const median = (a) => {
+    const s = [...a].sort((x, y) => x - y), k = s.length;
+    return k % 2 ? s[(k - 1) / 2] : (s[k / 2 - 1] + s[k / 2]) / 2;
+  };
+  const by = {};
+  for (const r of results) (by[r.topic] ||= []).push(r.lat);
+  const parts = Object.entries(by).map(([t, a]) => `${t}: ${median(a).toFixed(0)} ms (${a.length} lần)`);
+  const byAt = {};
+  for (const r of results) (byAt[r.at] ||= {})[r.topic.startsWith('WebRTC') ? 'w' : 'm'] = r.lat;
+  const diffs = Object.values(byAt).filter((p) => p.w !== undefined && p.m !== undefined).map((p) => p.w - p.m);
+  if (diffs.length) parts.push(`<b>WebRTC − MJPEG: ${median(diffs) > 0 ? '+' : ''}${median(diffs).toFixed(0)} ms</b> (trung vị ${diffs.length} cặp)`);
+  $('bySource').innerHTML = parts.join(' · ');
+}
+$('rows').onclick = (e) => {
+  const i = e.target.dataset.i;
+  if (i !== undefined) { results.splice(+i, 1); render(); }
+};
+
+$('reload').onclick = openStream;
+$('topic').onchange = openStream;
+$('transport').onchange = openStream;
+$('minJb').onchange = openStream;
+$('low').onchange = openStream;
+$('capture').onclick = capture;
+$('add').onclick = addResult;
+$('clear').onclick = () => { results.length = 0; render(); };
+$('copy').onclick = () => {
+  const text = ['#\ttopic\tlúc chụp\ttrong ảnh\tlatency_ms',
+    ...results.map((r, i) => `${i + 1}\t${r.topic}\t${r.at}\t${r.seen}\t${r.lat.toFixed(0)}`)].join('\n');
+  navigator.clipboard.writeText(text).then(() => setStatus('Đã copy kết quả', 'ok'));
+};
+document.addEventListener('keydown', (e) => {
+  if (e.target === $('seen') || e.target === $('seen2')) {
+    if (e.key !== 'Enter') return;
+    if (e.target === $('seen') && !$('seen2').disabled) $('seen2').focus();
+    else addResult();
+    return;
+  }
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); capture(); }
+});
+
+// latency_clock.html#webrtc mở thẳng chế độ WebRTC.
+if (location.hash === '#webrtc') $('transport').value = 'webrtc';
+if (location.hash === '#both') $('transport').value = 'both';
+openStream();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# Hồ sơ robot ROS 2 + Nav2 chuẩn (vd TurtleBot3/4): /odom, /cmd_vel, camera sensor_data.
+# Không có bộ điều hướng / lệnh dừng riêng của hãng → deadman chỉ hủy goal Nav2 + cmd_vel 0.
+launch:
+  webrtc_interfaces: ''   # '' = MediaMTX quảng bá mọi interface
+  # Robot chuẩn chưa có rosbridge → robot_stream tự bật, CHỈ nghe 127.0.0.1; app vào qua
+  # cổng gác :9091 (token). Robot đã có rosbridge riêng thì đặt false.
+  start_rosbridge: true
+
+stream_node:
+  ros__parameters:
+    source_topic: /camera/image_raw
+
+deadman:
+  ros__parameters:
+    odom_topic: /odom
+    stop_topic: ''
+    nav_mode_topic: ''
+
+waypoints:
+  ros__parameters:
+    file: ~/robot_stream/waypoints.yaml   # cùng định dạng semantic_waypoints.yaml

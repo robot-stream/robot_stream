@@ -1,0 +1,27 @@
+name: robot_stream_example
+description: Example Flutter app for robot_stream (WebRTC/MJPEG video, telemetry, Nav2 navigation, and teleop).
+publish_to: none
+version: 0.1.0+1
+resolution: workspace
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Used directly for MediaStreamTrack.captureFrame() in latency_probe.dart.
+  flutter_webrtc: ^1.6.2
+  robot_stream_core: ^0.1.0
+  robot_stream_mjpeg: ^0.1.0
+  robot_stream_rosbridge: ^0.1.0
+  robot_stream_webrtc: ^0.1.0
+  shared_preferences: ^2.3.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

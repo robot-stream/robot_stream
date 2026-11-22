@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latency tự động</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #15181d; --text: #e8eaed; --muted: #8a919c;
+    --line: #2a2f37; --accent: #3ddc97; --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .muted { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+  video { width: 100%; background: #000; border-radius: 8px; display: block; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td b { font-size: 18px; }
+  #status.ok { color: var(--accent); } #status.err { color: var(--bad); }
+  pre { white-space: pre-wrap; font-size: 12px; color: var(--muted); }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Latency WebRTC tự động – R550</h1>
+<div class="muted">
+  Đọc mã vạch <code>header.stamp</code> do <code>stream_node</code> vẽ (stamp_barcode:=true) trên từng frame.
+  Latency = giờ robot lúc frame tới/hiện trên máy này − stamp. Tham số URL:
+  <code>?ip=…&amp;offset=&lt;ms robot−máy này&gt;&amp;seconds=60&amp;jb=0</code>
+</div>
+<div id="status" class="muted">Đang khởi động…</div>
+
+<div class="grid">
+  <div class="card">
+    <table>
+      <thead><tr><th></th><th>p50</th><th>p95</th><th>min</th><th>max</th><th>n</th></tr></thead>
+      <tbody id="stats"></tbody>
+    </table>
+    <pre id="info"></pre>
+    <pre id="result"></pre>
+  </div>
+  <div class="card"><video id="video" autoplay muted playsinline></video></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const IP = q.get('ip') || location.hostname || '192.168.1.100';
+const OFFSET = parseFloat(q.get('offset') || '0'); // ms, giờ robot − giờ máy này
+const SECONDS = parseFloat(q.get('seconds') || '60');
+const MIN_JB = q.get('jb') === '0';
+const BITS = 32, ROW_H = 16;
+
+const video = $('video');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const recv = [], disp = [];
+let decodeFail = 0, framesSeen = 0, lastValue = -1, startedAt = 0, pc = null, jbMs = null;
+
+function setStatus(text, cls) { $('status').textContent = text; $('status').className = cls || 'muted'; }
+
+// Giờ robot (ms) tương ứng một mốc performance.now() trên máy này.
+const robotMs = (perfTs) => performance.timeOrigin + perfTs + OFFSET;
+// Hiệu theo modulo 2^32 (mã vạch chỉ giữ 32 bit thấp của ms).
+const diff32 = (robotNow, value) => ((Math.round(robotNow) - value) % 2 ** 32 + 2 ** 32) % 2 ** 32;
+
+function readBarcode() {
+  const w = video.videoWidth;
+  if (!w) return null;
+  canvas.width = w; canvas.height = 2 * ROW_H;
+  ctx.drawImage(video, 0, 0, w, 2 * ROW_H, 0, 0, w, 2 * ROW_H);
+  const px = ctx.getImageData(0, 0, w, 2 * ROW_H).data;
+  const cell = Math.floor(w / BITS);
+  const luma = (x, y) => {
+    let s = 0;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const i = ((y + dy) * w + (x + dx)) * 4;
+      s += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+    }
+    return s / 49;
+  };
+  let value = 0;
+  for (let b = 0; b < BITS; b++) {
+    const x = Math.floor((b + 0.5) * cell);
+    const top = luma(x, ROW_H / 2), bottom = luma(x, ROW_H + ROW_H / 2);
+    if (Math.abs(top - bottom) < 60) return null; // hàng đảo bit không khớp → đọc sai
+    value = value * 2 + (top > bottom ? 1 : 0);
+  }
+  return value >>> 0;
+}
+
+function onFrame(now, meta) {
+  framesSeen++;
+  const value = readBarcode();
+  if (value === null) decodeFail++;
+  else if (value !== lastValue) { // bỏ frame lặp (stream_node giữ frame cuối)
+    lastValue = value;
+    if (meta.receiveTime) recv.push(diff32(robotMs(meta.receiveTime), value));
+    disp.push(diff32(robotMs(meta.expectedDisplayTime), value));
+  }
+  if (performance.now() - startedAt < SECONDS * 1000) video.requestVideoFrameCallback(onFrame);
+  else finish();
+}
+
+const pct = (a, p) => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+const row = (name, a) => a.length
+  ? `<tr><td>${name}</td><td><b>${pct(a, 0.5)}</b></td><td>${pct(a, 0.95)}</td><td>${Math.min(...a)}</td><td>${Math.max(...a)}</td><td>${a.length}</td></tr>`
+  : `<tr><td>${name}</td><td colspan="5" class="muted">chưa có</td></tr>`;
+
+function summary() {
+  const s = (a) => a.length ? { p50: pct(a, 0.5), p95: pct(a, 0.95), min: Math.min(...a), max: Math.max(...a), n: a.length } : null;
+  return { receive_ms: s(recv), display_ms: s(disp), jitter_buffer_ms: jbMs, frames_seen: framesSeen, decode_fail: decodeFail, offset_ms: OFFSET, min_jb: MIN_JB };
+}
+
+function render() {
+  $('stats').innerHTML = row('Tới máy (receive)', recv) + row('Hiển thị (display)', disp);
+  $('info').textContent = `frame: ${framesSeen} · đọc lỗi: ${decodeFail} · jitter buffer: ${jbMs ?? '–'} ms · offset: ${OFFSET} ms · jb tối thiểu: ${MIN_JB}`;
+}
+
+async function pollStats() {
+  if (!pc) return;
+  (await pc.getStats()).forEach((s) => {
+    if (s.type === 'inbound-rtp' && s.kind === 'video' && s.jitterBufferEmittedCount) {
+      jbMs = Math.round(1000 * s.jitterBufferDelay / s.jitterBufferEmittedCount);
+    }
+  });
+  render();
+}
+
+function finish() {
+  render();
+  const r = summary();
+  $('result').textContent = 'RESULT ' + JSON.stringify(r);
+  document.title = 'DONE';
+  setStatus(`Xong ${SECONDS} s`, 'ok');
+  console.log('RESULT', JSON.stringify(r));
+  // Trang chạy từ www_server.py trên robot: gửi kết quả về để đọc lại qua SSH.
+  fetch('/result', { method: 'POST', body: JSON.stringify({ ...r, ua: navigator.userAgent, label: q.get('label') || '' }) })
+    .catch(() => {});
+}
+
+async function start() {
+  const url = `http://${IP}:8889/robot_cam/whep`;
+  pc = new RTCPeerConnection();
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.ontrack = (e) => {
+    if (MIN_JB) {
+      if ('jitterBufferTarget' in e.receiver) e.receiver.jitterBufferTarget = 0;
+      if ('playoutDelayHint' in e.receiver) e.receiver.playoutDelayHint = 0;
+    }
+    video.srcObject = e.streams[0] || new MediaStream([e.track]);
+  };
+  // Gửi offer ngay, không chờ gom ICE: MediaMTX tự nhận địa chỉ trình duyệt (prflx)
+  // khi trình duyệt gửi STUN tới host candidate của robot. Chrome headless không
+  // chạy setTimeout khi dùng --timeout, nên chờ gom ICE sẽ treo.
+  await pc.setLocalDescription(await pc.createOffer());
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
+  if (res.status !== 201) throw new Error(`WHEP HTTP ${res.status}`);
+  await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
+  setStatus(`Đang đo ${SECONDS} s…`, 'ok');
+  startedAt = performance.now();
+  video.requestVideoFrameCallback(onFrame);
+  setInterval(pollStats, 1000);
+}
+
+start().catch((e) => {
+  setStatus(`Lỗi: ${e.message}`, 'err');
+  $('result').textContent = 'RESULT ' + JSON.stringify({ error: e.message });
+  document.title = 'DONE';
+  fetch('/result', { method: 'POST', body: JSON.stringify({ error: e.message, label: q.get('label') || '' }) }).catch(() => {});
+});
+</script>
+</body>
+</html>

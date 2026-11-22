@@ -1,0 +1,7 @@
+# Waypoint mẫu cho bản đồ turtlebot3_world (nav2_bringup/maps). Cùng định dạng với
+# semantic_waypoints.yaml của R550: tên: [x, y, yaw]. Đã kiểm cách vật cản >= 0.35 m.
+waypoints:
+  "xuất phát": [-2.0, -0.5, 0.0]
+  "góc trên trái": [-1.5, 1.6, 0.0]
+  "giữa": [0.0, 0.55, 1.57]
+  "dưới": [0.55, -1.6, 0.0]

@@ -1,0 +1,28 @@
+# systemd user service: tự chạy MediaMTX + stream_node khi robot đăng nhập màn hình.
+# Cài: robot_node/scripts/install_autostart.sh (không cần sudo).
+# Xem log: tail -f ~/robot_stream/stream.log
+# (R550 không lưu journal của user service nên ghi ra file, giống wheeltec_lisa.service.)
+
+[Unit]
+Description=robot_stream – camera WebRTC/WHEP (MediaMTX + stream_node)
+After=default.target
+
+[Service]
+Type=simple
+# Chờ Wifi có IP (tối đa 120 s): DDS chỉ gắn vào các interface có sẵn lúc khởi động,
+# chạy sớm hơn thì node không thấy và không được thấy (đo 06/11: 0 frame tới khi restart).
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 120); do ip -4 route show default | grep -q . && exit 0; sleep 1; done; exit 0'
+# Đợi stack của robot (camera Astra) lên trước; stream_node vẫn tự chờ frame đầu.
+ExecStartPre=/bin/sleep 20
+TimeoutStartSec=180
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source %h/robot_stream/ws/install/setup.bash && exec ros2 launch robot_stream_ros stream.launch.py'
+StandardOutput=append:%h/robot_stream/stream.log
+StandardError=inherit
+Restart=on-failure
+RestartSec=5
+# ros2 launch chuyển SIGINT cho các node con để tắt gọn.
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

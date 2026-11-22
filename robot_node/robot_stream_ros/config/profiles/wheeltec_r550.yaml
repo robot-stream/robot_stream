@@ -1,0 +1,26 @@
+# Hồ sơ Wheeltec R550 Ultra (Orin Nano, ROS 2 Humble, AIUI + semantic_nav).
+# Mục `launch` dành cho stream.launch.py (không phải tham số node).
+launch:
+  # Jetson có docker0 / l4tbr0 → chỉ quảng bá IP Wifi, kẻo WebRTC treo "connecting".
+  webrtc_interfaces: wlP1p1s0
+  # rosbridge :9090 do AIUI (aiui_web.launch.py) bật, nghe mọi địa chỉ, không token. App đi
+  # qua cổng gác :9091; đóng 9090 với LAN (bind 127.0.0.1) để bản Pro.
+  start_rosbridge: false
+
+stream_node:
+  ros__parameters:
+    source_topic: /camera/color/image_raw
+    encoder_threads: 2
+    x264_options: vbv-buf-capacity=100 sliced-threads=true
+
+deadman:
+  ros__parameters:
+    odom_topic: /odom_combined
+    # semantic_nav: "dừng lại" hủy mọi điều hướng của nó; /semantic_nav_mode = đang bận.
+    stop_topic: /parsed_commands
+    stop_word: dừng lại
+    nav_mode_topic: /semantic_nav_mode
+
+waypoints:
+  ros__parameters:
+    file: ~/wheeltec_ros2/install/wheeltec_mic_aiui/share/wheeltec_mic_aiui/config/semantic_waypoints.yaml

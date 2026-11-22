@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nháy đo camera</title>
+<style>
+  :root { --bg: #000; --fg: #888; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+  body { font: 14px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; }
+  #info { position: fixed; left: 12px; bottom: 10px; mix-blend-mode: difference; color: #fff; }
+</style>
+</head>
+<body>
+<div id="info">Chạm vào màn hình để bắt đầu (toàn màn hình + đồng bộ đồng hồ với robot).</div>
+<script>
+// Đo trễ camera: màn hình đổi đen ↔ trắng ở khoảng ngẫu nhiên 600–1000 ms, ghi lúc đổi
+// (timestamp của requestAnimationFrame). Màu mới thực sự lên màn hình sau đó ~1 khung
+// (16.7 ms ở 60 Hz) + thời gian đáp ứng panel. Trang phục vụ từ www_server của robot
+// (:8001): tự đồng bộ đồng hồ qua GET /time (mẫu RTT nhỏ nhất) nên chạy được trên
+// điện thoại; thời điểm nháy gửi về theo đồng hồ robot (POST /result).
+const q = new URLSearchParams(location.search);
+const SECONDS = parseFloat(q.get('seconds') || '40');
+const START_DELAY = 10000; // để kịp đưa màn hình vào trước camera
+const flashes = [];
+const info = document.getElementById('info');
+let white = false, next = 0, started = 0, offset = 0, rtt = 0;
+
+async function syncClock(n = 30) {
+  let best = null;
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.timeOrigin + performance.now();
+    const r = await fetch('/time', { cache: 'no-store' }).then((x) => x.json());
+    const t1 = performance.timeOrigin + performance.now();
+    if (!best || t1 - t0 < best.rtt) best = { rtt: t1 - t0, offset: r.t - (t0 + t1) / 2 };
+  }
+  return best;
+}
+
+function frame(ts) {
+  if (!started) { started = ts; next = ts + START_DELAY; }
+  if (ts >= next) {
+    white = !white;
+    document.body.style.background = white ? '#fff' : '#000';
+    flashes.push({ t: performance.timeOrigin + ts + offset, white }); // đồng hồ robot
+    next = ts + 600 + Math.random() * 400;
+    info.textContent = `Đang đo… ${flashes.length} lần đổi`;
+  } else if (!flashes.length) {
+    info.textContent = `Đưa màn hình vào sát camera robot… bắt đầu sau ${Math.ceil((next - ts) / 1000)} s`;
+  }
+  if (ts - started < SECONDS * 1000 + START_DELAY) requestAnimationFrame(frame);
+  else finish();
+}
+
+function finish() {
+  document.body.style.background = '#000';
+  info.textContent = `Xong: ${flashes.length} lần đổi (đồng hồ lệch ${offset.toFixed(1)} ms, rtt ${rtt.toFixed(1)} ms)`;
+  fetch('/result', {
+    method: 'POST',
+    body: JSON.stringify({ label: 'flash', robot_clock: true, sync_rtt_ms: rtt, flashes, ua: navigator.userAgent }),
+  }).catch(() => {});
+  document.title = 'DONE';
+}
+
+document.addEventListener('click', async () => {
+  if (started || info.dataset.busy) return;
+  info.dataset.busy = '1';
+  document.documentElement.requestFullscreen?.().catch(() => {});
+  navigator.wakeLock?.request('screen').catch(() => {}); // không cho màn hình tắt
+  info.textContent = 'Đồng bộ đồng hồ với robot…';
+  try {
+    ({ offset, rtt } = await syncClock());
+  } catch (e) {
+    info.textContent = `Không đồng bộ được với robot: ${e.message}`;
+    return;
+  }
+  requestAnimationFrame(frame);
+});
+</script>
+</body>
+</html>
