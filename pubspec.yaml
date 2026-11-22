@@ -5,6 +5,7 @@ environment:
   sdk: ^3.8.1
 
 workspace:
+  - packages/robot_stream
   - packages/robot_stream_core
   - packages/robot_stream_mjpeg
   - packages/robot_stream_webrtc

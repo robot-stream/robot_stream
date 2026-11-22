@@ -6,6 +6,7 @@ Flutter and Dart libraries for low-latency ROS 2 robot video streaming (WebRTC/W
 
 | Directory | Package | Description |
 |---|---|---|
+| `packages/robot_stream` | `robot_stream` | All-in-one Flutter umbrella package re-exporting all four `robot_stream_*` packages (Android, iOS, macOS). |
 | `packages/robot_stream_core` | `robot_stream_core` | Pure-Dart models, `VideoSource` / `RobotTransport` interfaces, and SHA-256 TLS certificate pinning (`dart:io`, non-web). |
 | `packages/robot_stream_webrtc` | `robot_stream_webrtc` | Low-latency receive-only WebRTC/WHEP video (`WhepSource`, `WhepSignaling`, `RobotVideoView`) on `flutter_webrtc`, with Android `WIFI_MODE_FULL_LOW_LATENCY` plugin and iOS/macOS stubs. |
 | `packages/robot_stream_mjpeg` | `robot_stream_mjpeg` | HTTP MJPEG fallback video (`MjpegSource`, `MjpegView`, `webVideoServerUri`) with JPEG marker framing, reconnect backoff, and stall detection. |
