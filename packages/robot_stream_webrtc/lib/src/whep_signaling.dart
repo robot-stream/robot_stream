@@ -90,7 +90,7 @@ class WhepSignaling {
     }
     final answer = response.body;
     if (!answer.trimLeft().startsWith('v=0')) {
-      throw const WhepException('Phản hồi 201 nhưng không phải SDP answer');
+      throw const WhepException('Received HTTP 201 without a valid SDP answer');
     }
     final location = response.headers['location'];
     return WhepAnswer(

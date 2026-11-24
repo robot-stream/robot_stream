@@ -176,7 +176,9 @@ class RosbridgeClient {
 
   /// Connects to [uri], optionally sending `Authorization: Bearer <token>`.
   void connect(Uri uri, {String? token}) {
-    if (_link is LinkClosed) throw StateError('RosbridgeClient đã dispose');
+    if (_link is LinkClosed) {
+      throw StateError('RosbridgeClient has been disposed');
+    }
     _uri = uri;
     _headers = {if (token != null) 'Authorization': 'Bearer $token'};
     final gen = _abort();
@@ -218,8 +220,8 @@ class RosbridgeClient {
           LinkRejected(
             statusCode: status!,
             reason: status == 401
-                ? 'Robot từ chối: thiếu hoặc sai token'
-                : 'Robot từ chối: không có quyền',
+                ? 'Robot rejected connection: missing or invalid token'
+                : 'Robot rejected connection: forbidden',
           ),
         );
         return;
@@ -251,7 +253,7 @@ class RosbridgeClient {
       await ch.ready.timeout(connectTimeout);
     } catch (e) {
       return gen == _generation
-          ? (reason: 'Không kết nối được: $e', connected: false)
+          ? (reason: 'Failed to connect: $e', connected: false)
           : null;
     }
     if (gen != _generation) {
@@ -274,9 +276,10 @@ class RosbridgeClient {
     final sub = ch.stream.listen(
       (data) => _onMessage(data),
       onError: (Object e) =>
-          done.isCompleted ? null : done.complete('Lỗi WebSocket: $e'),
-      onDone: () =>
-          done.isCompleted ? null : done.complete('Robot đóng kết nối'),
+          done.isCompleted ? null : done.complete('WebSocket error: $e'),
+      onDone: () => done.isCompleted
+          ? null
+          : done.complete('Robot closed the connection'),
       cancelOnError: true,
     );
     final reason = await done.future;
@@ -416,7 +419,7 @@ final class RosbridgeActionResult {
 
   @override
   String toString() =>
-      lost ? 'ActionResult(mất kết nối)' : 'ActionResult(status $status)';
+      lost ? 'ActionResult(connection lost)' : 'ActionResult(status $status)';
 }
 
 /// Handle to an action goal submitted via [RosbridgeClient.sendActionGoal].

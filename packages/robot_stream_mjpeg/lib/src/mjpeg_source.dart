@@ -89,7 +89,7 @@ class MjpegSource implements VideoSource {
   @override
   Future<void> connect(Uri endpoint, {String? token}) async {
     if (_state is VideoClosed) {
-      throw StateError('MjpegSource đã dispose');
+      throw StateError('MjpegSource has been disposed');
     }
     _endpoint = endpoint;
     _token = token;
@@ -167,7 +167,7 @@ class MjpegSource implements VideoSource {
       final error = stalled
           ? VideoError(
               VideoErrorKind.stalled,
-              'Không có frame mới trong ${stallTimeout.inMilliseconds} ms',
+              'No new frames for ${stallTimeout.inMilliseconds} ms',
             )
           : VideoError(kind, message, statusCode: statusCode);
       return (error: error, gotFrames: gotFrames);
@@ -201,14 +201,14 @@ class MjpegSource implements VideoSource {
       return fail(
         VideoErrorKind.network,
         gotFrames
-            ? 'Server đóng luồng'
-            : 'Server đóng luồng khi chưa gửi frame nào – sai topic?',
+            ? 'Server closed the stream'
+            : 'Server closed the stream before sending any frames — wrong topic?',
       );
     } on TimeoutException {
       if (gen != _generation) return null;
       return fail(
         VideoErrorKind.network,
-        'Không kết nối được trong ${connectTimeout.inSeconds} s',
+        'Connection timed out after ${connectTimeout.inSeconds} s',
       );
     } on FormatException catch (e) {
       if (gen != _generation) return null;

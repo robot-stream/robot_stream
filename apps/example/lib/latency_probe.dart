@@ -7,6 +7,8 @@ import 'dart:ui' as ui;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:robot_stream_core/robot_stream_core.dart';
 
+import 'strings.dart';
+
 /// Đo latency WebRTC ngay trên điện thoại.
 ///
 /// Cần robot ở chế độ đo (`robot_node/scripts/measure_mode.sh on`): stream_node vẽ
@@ -78,9 +80,7 @@ class LatencyProbe {
       socket.close();
     }
     if (best == null) {
-      throw StateError(
-        'time_server :$timePort không trả lời – robot đã bật measure_mode chưa?',
-      );
+      throw StateError(tr('time_server_no_reply', {'port': timePort}));
     }
     return (offsetMs: best.$2 / 1000, rttMs: best.$1 / 1000);
   }
@@ -191,11 +191,18 @@ class LatencyResult {
   @override
   String toString() {
     if (lo.isEmpty) {
-      return 'không đọc được frame nào (lỗi mã vạch $decodeFail) – stamp_barcode đã bật chưa?';
+      return tr('latency_no_frames', {'fail': decodeFail});
     }
     String f(double v) => v.toStringAsFixed(0);
-    return '≈ ${f(estimateP50)} ms (p50) · cận dưới p50 ${f(_p(lo, 0.5))} / p95 ${f(_p(lo, 0.95))} · '
-        'cận trên p50 ${f(_p(hi, 0.5))} · khung ${f(frameMs)} ms · n ${lo.length}, lỗi mã vạch $decodeFail';
+    return tr('latency_summary', {
+      'est': f(estimateP50),
+      'lo50': f(_p(lo, 0.5)),
+      'lo95': f(_p(lo, 0.95)),
+      'hi50': f(_p(hi, 0.5)),
+      'frame': f(frameMs),
+      'n': lo.length,
+      'fail': decodeFail,
+    });
   }
 }
 

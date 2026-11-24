@@ -68,7 +68,7 @@ class MjpegScanner {
       if (eoi < 0) {
         if (_len > maxFrameBytes) {
           throw FormatException(
-            'Không thấy cuối ảnh JPEG sau $_len byte – luồng không phải MJPEG?',
+            'JPEG end-of-image marker not found after $_len bytes — stream may not be MJPEG',
           );
         }
         _scan = math.max(2, _len - 1);

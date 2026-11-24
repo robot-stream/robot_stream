@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:robot_stream_core/robot_stream_core.dart';
 import 'package:robot_stream_rosbridge/robot_stream_rosbridge.dart';
 
+import 'strings.dart';
+
 /// Điều hướng R550 (giai đoạn 2b) – **làm robot di chuyển thật**.
 ///
 /// An toàn: nút DỪNG luôn bấm được và báo rõ nếu lệnh không tới robot; các lệnh đi
@@ -59,18 +61,16 @@ class _NavPanelState extends State<NavPanel> {
     setState(() {});
     if (a.state == NavActivityState.active) _seenActive.add(a.goalId);
     if (a.state == NavActivityState.aborted && _seenActive.remove(a.goalId)) {
-      _warn(
-        'Robot BỎ CUỘC: không tới được đích (đích ngoài bản đồ / bị chặn / kẹt).',
-      );
+      _warn(tr('nav_aborted_banner'));
     }
   }
 
   static String _activityText(NavActivity a) => switch (a.state) {
-    NavActivityState.active => 'robot đang đi',
-    NavActivityState.canceling => 'robot đang hủy',
-    NavActivityState.succeeded => 'lần cuối: tới nơi',
-    NavActivityState.canceled => 'lần cuối: đã hủy',
-    NavActivityState.aborted => 'lần cuối: BỎ CUỘC',
+    NavActivityState.active => tr('activity_active'),
+    NavActivityState.canceling => tr('activity_canceling'),
+    NavActivityState.succeeded => tr('activity_succeeded'),
+    NavActivityState.canceled => tr('activity_canceled'),
+    NavActivityState.aborted => tr('activity_aborted'),
   };
 
   @override
@@ -83,25 +83,33 @@ class _NavPanelState extends State<NavPanel> {
 
   /// Lý do không cho đi, hoặc null nếu được đi.
   String? get _blocked {
-    if (t.currentLink is! LinkConnected) return 'Chưa kết nối rosbridge';
+    if (t.currentLink is! LinkConnected) return tr('blocked_disconnected');
     // Không có deadman thì rớt mạng giữa chừng robot vẫn đi tiếp tới đích.
     if (t.currentDeadman != 'armed') {
-      return 'Robot chưa bật deadman (${t.currentDeadman ?? 'không thấy deadman_node'})';
+      return tr('blocked_deadman', {
+        'state': t.currentDeadman ?? tr('deadman_missing'),
+      });
     }
     final minV = widget.profile.minBatteryV;
     final minP = widget.profile.minBatteryPercent;
     if (minV == null && minP == null) return null; // robot không đặt ngưỡng pin
     final b = t.currentBattery;
-    if (b == null) return 'Chưa biết pin';
+    if (b == null) return tr('blocked_battery_unknown');
     final v = b.voltage, pct = b.percentage;
     if (minV != null && v != null && v < minV) {
-      return 'Pin ${v.toStringAsFixed(2)} V < $minV V';
+      return tr('blocked_battery_low_v', {
+        'v': v.toStringAsFixed(2),
+        'min': minV,
+      });
     }
     if (minP != null && pct != null && pct < minP) {
-      return 'Pin ${(pct * 100).round()}% < ${(minP * 100).round()}%';
+      return tr('blocked_battery_low_pct', {
+        'pct': (pct * 100).round(),
+        'min': (minP * 100).round(),
+      });
     }
     if ((minV == null || v == null) && (minP == null || pct == null)) {
-      return 'Robot không báo mức pin cần kiểm';
+      return tr('blocked_battery_unreported');
     }
     return null;
   }
@@ -111,19 +119,16 @@ class _NavPanelState extends State<NavPanel> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Robot sẽ di chuyển'),
-        content: const Text(
-          'Khu vực quanh robot đã trống chưa? Bạn có đứng cạnh để dừng/nhấc robot khi cần không?\n\n'
-          'Nút DỪNG luôn ở trên cùng.',
-        ),
+        title: Text(tr('confirm_title')),
+        content: Text(tr('confirm_body')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Chưa'),
+            child: Text(tr('confirm_cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Đã trống, cho đi'),
+            child: Text(tr('confirm_ok')),
           ),
         ],
       ),
@@ -135,18 +140,18 @@ class _NavPanelState extends State<NavPanel> {
   Future<void> _goWaypoint(String name) async {
     if (!await _confirm()) return;
     final sent = t.goToWaypoint(name);
-    debugPrint('[nav] waypoint "$name" gửi=$sent');
+    debugPrint('[nav] waypoint "$name" sent=$sent');
     setState(
       () => _status = sent
-          ? 'Đã gửi: đi tới "$name"'
-          : 'Không gửi được (mất kết nối)',
+          ? tr('waypoint_sent', {'name': name})
+          : tr('send_failed_disconnected'),
     );
   }
 
   Future<void> _goForward(double meters) async {
     final p = t.currentPose;
     if (p == null) {
-      setState(() => _status = 'Chưa có pose robot');
+      setState(() => _status = tr('no_robot_pose'));
       return;
     }
     if (!await _confirm()) return;
@@ -157,59 +162,56 @@ class _NavPanelState extends State<NavPanel> {
       frameId: p.frameId,
     );
     final h = t.navigateTo(goal);
-    debugPrint('[nav] goal $goal (tiến $meters m)');
+    debugPrint('[nav] goal $goal (forward $meters m)');
     setState(() {
       _goal = h;
       _progress = null;
-      _status =
-          'Đi tới ${goal.x.toStringAsFixed(2)}, ${goal.y.toStringAsFixed(2)} (${goal.frameId})…';
+      _status = tr('navigating_to', {
+        'x': goal.x.toStringAsFixed(2),
+        'y': goal.y.toStringAsFixed(2),
+        'frame': goal.frameId,
+      });
     });
     h.progress.listen(
       (p) =>
           mounted && identical(_goal, h) ? setState(() => _progress = p) : null,
     );
     final outcome = await h.outcome;
-    debugPrint('[nav] kết quả $outcome');
+    debugPrint('[nav] outcome $outcome');
     if (!mounted || !identical(_goal, h)) return;
     setState(() {
       _goal = null;
       _progress = null; // không hiện "còn x m" cũ sau khi đã xong
       _status = switch (outcome) {
-        NavOutcome.succeeded => 'Đã tới đích',
-        NavOutcome.canceled => 'Đã hủy',
-        NavOutcome.aborted => 'Robot bỏ cuộc (không tìm được đường / kẹt)',
-        NavOutcome.rejected => 'Robot không nhận goal',
-        NavOutcome.connectionLost => 'MẤT KẾT NỐI – robot có thể vẫn đang đi!',
+        NavOutcome.succeeded => tr('outcome_succeeded'),
+        NavOutcome.canceled => tr('outcome_canceled'),
+        NavOutcome.aborted => tr('outcome_aborted'),
+        NavOutcome.rejected => tr('outcome_rejected'),
+        NavOutcome.connectionLost => tr('outcome_connection_lost'),
       };
     });
   }
 
   Future<void> _stop() async {
     final sent = t.stop();
-    debugPrint('[nav] DỪNG gửi=$sent (goal đang chạy: ${_goal != null})');
-    setState(
-      () => _status = sent ? 'Đã gửi lệnh DỪNG, chờ Nav2 xác nhận…' : null,
-    );
+    debugPrint('[nav] STOP sent=$sent (active goal: ${_goal != null})');
+    setState(() => _status = sent ? tr('stop_sent_waiting') : null);
     if (!sent) {
-      _warn(
-        'CHƯA DỪNG ĐƯỢC: mất kết nối tới robot. Dừng bằng tay (nhấc robot / nút nguồn)!',
-      );
+      _warn(tr('stop_failed_disconnected'));
       return;
     }
     final ack = await t.lastStopAck;
-    debugPrint('[nav] DỪNG xác nhận=$ack');
+    debugPrint('[nav] STOP ack=$ack');
     if (!mounted) return;
     setState(
       () => _status = switch (ack) {
-        true => 'Nav2 đã xác nhận DỪNG',
-        false => 'Nav2 TỪ CHỐI lệnh dừng',
-        null => 'Không có xác nhận từ Nav2',
+        true => tr('stop_confirmed'),
+        false => tr('stop_rejected'),
+        null => tr('stop_no_ack'),
       },
     );
     if (ack != true) {
-      _warn(
-        'Robot chưa xác nhận dừng – quan sát robot, dừng bằng tay nếu nó vẫn chạy!',
-      );
+      _warn(tr('stop_unconfirmed_warn'));
     }
   }
 
@@ -224,15 +226,15 @@ class _NavPanelState extends State<NavPanel> {
       return;
     }
     final sent = t.drive(linear, angular);
-    debugPrint('[nav] lái tay $key gửi=$sent');
+    debugPrint('[nav] drive $key sent=$sent');
     setState(() => _driving = sent ? key : null);
-    if (!sent) _warn('Không gửi được lệnh lái (mất kết nối)');
+    if (!sent) _warn(tr('drive_send_failed'));
   }
 
   void _driveEnd() {
     if (_driving == null) return;
     t.drive(0, 0);
-    debugPrint('[nav] lái tay nhả');
+    debugPrint('[nav] drive release');
     setState(() => _driving = null);
   }
 
@@ -300,17 +302,20 @@ class _NavPanelState extends State<NavPanel> {
               ),
               onPressed: _stop,
               icon: const Icon(Icons.stop_circle_outlined, size: 28),
-              label: const Text('DỪNG'),
+              label: Text(tr('stop_btn')),
             ),
             const SizedBox(height: 8),
             Text(
               [
                 // Chỉ robot có bộ điều hướng riêng (R550 semantic_nav) mới báo chế độ.
                 if (widget.profile.topics.navModeTopic != null)
-                  'Điều hướng: ${mode ?? '?'}',
+                  tr('nav_mode', {'mode': mode ?? '?'}),
                 if (activity != null) _activityText(activity),
                 ?blocked,
-                if (progress != null) 'còn ${progress.toStringAsFixed(2)} m',
+                if (progress != null)
+                  tr('distance_remaining', {
+                    'dist': progress.toStringAsFixed(2),
+                  }),
                 if (_status != null) _status!,
               ].join(' · '),
               style: Theme.of(context).textTheme.bodySmall,
@@ -325,7 +330,7 @@ class _NavPanelState extends State<NavPanel> {
                           ? () => _goForward(m)
                           : null,
                       icon: const Icon(Icons.arrow_upward),
-                      label: Text('Tiến $m m'),
+                      label: Text(tr('forward_btn', {'m': m})),
                     ),
                   ),
                   if (m == 0.5) const SizedBox(width: 8),
@@ -338,7 +343,7 @@ class _NavPanelState extends State<NavPanel> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _driveButton(
-                  'trái',
+                  'left',
                   Icons.rotate_left,
                   0,
                   _driveAngular,
@@ -348,7 +353,7 @@ class _NavPanelState extends State<NavPanel> {
                 Column(
                   children: [
                     _driveButton(
-                      'tiến',
+                      'forward',
                       Icons.keyboard_arrow_up,
                       _driveLinear,
                       0,
@@ -356,7 +361,7 @@ class _NavPanelState extends State<NavPanel> {
                     ),
                     const SizedBox(height: 6),
                     _driveButton(
-                      'lùi',
+                      'backward',
                       Icons.keyboard_arrow_down,
                       -_driveLinear,
                       0,
@@ -366,7 +371,7 @@ class _NavPanelState extends State<NavPanel> {
                 ),
                 const SizedBox(width: 6),
                 _driveButton(
-                  'phải',
+                  'right',
                   Icons.rotate_right,
                   0,
                   -_driveAngular,
@@ -382,7 +387,7 @@ class _NavPanelState extends State<NavPanel> {
                 // Danh sách lấy từ robot (waypoints_node), không chép cứng.
                 if (t.currentWaypoints == null)
                   Text(
-                    'Chưa nhận danh sách điểm từ robot',
+                    tr('no_waypoints'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 for (final w in t.currentWaypoints ?? const <NamedWaypoint>[])

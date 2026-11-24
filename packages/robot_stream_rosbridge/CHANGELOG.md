@@ -1,3 +1,7 @@
+## 0.1.1
+
+- Translated `RosbridgeClient` error/status messages and `RobotProfile.wheeltecR550` MJPEG camera labels from Vietnamese to English (keeping the Wheeltec R550 `stopWord` voice command unchanged).
+
 ## 0.1.0
 
 - Initial release of `robot_stream_rosbridge`.

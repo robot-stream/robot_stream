@@ -27,8 +27,8 @@ final class RobotProfile {
     topics: RosbridgeTopics.wheeltecR550(),
     minBatteryV: 10.3, // semantic_nav rejects goals below this voltage
     mjpegTopics: [
-      ('/camera/color/image_raw', 'Ảnh gốc'),
-      ('/detected_image', 'Có khung YOLO'),
+      ('/camera/color/image_raw', 'Raw camera'),
+      ('/detected_image', 'YOLO overlay'),
     ],
   );
 

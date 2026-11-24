@@ -1,3 +1,7 @@
+## 0.1.1
+
+- Translated all `MjpegFrameDecoder` and `MjpegSource` error messages from Vietnamese to English.
+
 ## 0.1.0
 
 - Initial release of `robot_stream_mjpeg`.

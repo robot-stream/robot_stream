@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:robot_stream_core/robot_stream_core.dart';
 
+import 'strings.dart';
+
 /// Pose, pin, trạng thái kênh telemetry chồng lên video.
 class TelemetryOverlay extends StatelessWidget {
   const TelemetryOverlay({super.key, required this.transport});
@@ -41,13 +43,13 @@ class TelemetryOverlay extends StatelessWidget {
                       '${p.yawDegrees.toStringAsFixed(0)}° · ${p.frameId}',
                 if (b != null)
                   [
-                    'pin',
+                    tr('battery_prefix'),
                     if (b.voltage != null) '${b.voltage!.toStringAsFixed(2)} V',
                     if (b.percentage != null)
                       '${(b.percentage! * 100).round()}%',
                   ].join(' '),
               ];
-              if (lines.isEmpty) lines.add('Đang chờ telemetry…');
+              if (lines.isEmpty) lines.add(tr('waiting_telemetry'));
               return DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.6),
@@ -94,11 +96,13 @@ class TelemetryOverlay extends StatelessWidget {
   }
 
   static String _linkText(LinkState s) => switch (s) {
-    LinkIdle() => 'rosbridge: chưa kết nối',
-    LinkConnecting() => 'rosbridge: đang kết nối…',
-    LinkConnected() => 'rosbridge: đã kết nối',
-    LinkReconnecting(:final attempt) => 'rosbridge: kết nối lại #$attempt',
+    LinkIdle() => tr('rosbridge_idle'),
+    LinkConnecting() => tr('rosbridge_connecting'),
+    LinkConnected() => tr('rosbridge_connected'),
+    LinkReconnecting(:final attempt) => tr('rosbridge_reconnecting', {
+      'attempt': attempt,
+    }),
     LinkRejected(:final reason) => 'rosbridge: $reason',
-    LinkClosed() => 'rosbridge: đã đóng',
+    LinkClosed() => tr('rosbridge_closed'),
   };
 }

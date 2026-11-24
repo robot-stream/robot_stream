@@ -50,7 +50,7 @@ final class NavProgress {
 
   @override
   String toString() =>
-      'NavProgress(còn ${distanceRemaining?.toStringAsFixed(2) ?? '?'} m, '
+      'NavProgress(${distanceRemaining?.toStringAsFixed(2) ?? '?'} m remaining, '
       '${navigationTime?.inSeconds ?? '?'} s, recovery ${recoveries ?? '?'})';
 }
 

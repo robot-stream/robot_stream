@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'latency_probe.dart';
 import 'nav_panel.dart';
+import 'strings.dart';
 import 'telemetry_overlay.dart';
 
 void main() => runApp(
@@ -31,7 +32,7 @@ class RobotStreamApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'R550 Stream',
+      title: tr('app_title'),
       theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
       darkTheme: ThemeData(
         colorSchemeSeed: Colors.teal,
@@ -156,19 +157,20 @@ class _CameraPageState extends State<CameraPage> {
   Future<void> _measureLatency(WhepSource whep) async {
     final track = whep.currentStream?.getVideoTracks().firstOrNull;
     if (track == null) {
-      setState(() => _latencyText = 'Chưa có video WebRTC');
+      setState(() => _latencyText = tr('no_webrtc_video'));
       return;
     }
     final probe = LatencyProbe(host: _host.text.trim());
     setState(() {
       _measuring = true;
-      _latencyText = 'Đồng bộ đồng hồ…';
+      _latencyText = tr('syncing_clock');
     });
     try {
       final clock = await probe.clockOffset();
-      final clockText =
-          'đồng hồ lệch ${clock.offsetMs.toStringAsFixed(1)} ms, '
-          'rtt min ${clock.rttMs.toStringAsFixed(1)} ms';
+      final clockText = tr('clock_summary', {
+        'offset': clock.offsetMs.toStringAsFixed(1),
+        'rtt': clock.rttMs.toStringAsFixed(1),
+      });
       _statsDuringMeasure.clear();
       final result = await probe.measure(
         track,
@@ -176,14 +178,21 @@ class _CameraPageState extends State<CameraPage> {
         fps: _lastFps,
         onProgress: (n) {
           if (mounted) {
-            setState(() => _latencyText = 'Đang đo $n/60 · $clockText');
+            setState(
+              () => _latencyText = tr('measuring_progress', {
+                'n': n,
+                'clock': clockText,
+              }),
+            );
           }
         },
       );
       final stats = [..._statsDuringMeasure];
       _statsDuringMeasure.clear();
-      final text =
-          'Latency tới lúc decode xong (cận dưới, ±1 frame): $result\n$clockText';
+      final text = tr('latency_result_header', {
+        'result': result,
+        'clock': clockText,
+      });
       debugPrint('[latency] $text');
       // Log `flutter run` từ iOS hay ngắt: gửi kết quả về www_server của robot
       // (chế độ đo) để đọc qua SSH: ~/robot_stream/www/results.jsonl.
@@ -196,7 +205,9 @@ class _CameraPageState extends State<CameraPage> {
       );
       if (mounted) setState(() => _latencyText = text);
     } catch (e) {
-      if (mounted) setState(() => _latencyText = 'Lỗi đo: $e');
+      if (mounted) {
+        setState(() => _latencyText = tr('measure_error', {'error': e}));
+      }
     } finally {
       if (mounted) setState(() => _measuring = false);
     }
@@ -361,10 +372,10 @@ class _CameraPageState extends State<CameraPage> {
           const SizedBox(height: 16),
           TextField(
             controller: _host,
-            decoration: const InputDecoration(
-              labelText: 'IP robot',
+            decoration: InputDecoration(
+              labelText: tr('robot_ip_label'),
               hintText: '192.168.1.100',
-              border: OutlineInputBorder(),
+              border: const OutlineInputBorder(),
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             onSubmitted: (_) => _connect(),
@@ -376,11 +387,11 @@ class _CameraPageState extends State<CameraPage> {
             autocorrect: false,
             enableSuggestions: false,
             decoration: InputDecoration(
-              labelText: 'Token robot',
-              helperText: 'Trên robot: ros2 run robot_stream_ros show_token',
+              labelText: tr('robot_token_label'),
+              helperText: tr('robot_token_helper'),
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
-                tooltip: _showToken ? 'Ẩn' : 'Hiện',
+                tooltip: _showToken ? tr('hide') : tr('show'),
                 icon: Icon(
                   _showToken ? Icons.visibility_off : Icons.visibility,
                 ),
@@ -403,14 +414,17 @@ class _CameraPageState extends State<CameraPage> {
             SegmentedButton<String>(
               segments: [
                 for (final (topic, label) in _profile.mjpegTopics)
-                  ButtonSegment(value: topic, label: Text(label)),
+                  ButtonSegment(
+                    value: topic,
+                    label: Text(trTopicLabel(topic, label)),
+                  ),
               ],
               selected: {_topic},
               onSelectionChanged: (s) => _update(() => _topic = s.first),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Giảm tải (640x480, quality 50)'),
+              title: Text(tr('low_load_label')),
               value: _lowLoad,
               onChanged: (v) => _update(() => _lowLoad = v),
             ),
@@ -419,7 +433,7 @@ class _CameraPageState extends State<CameraPage> {
           FilledButton.icon(
             onPressed: _connect,
             icon: Icon(_connected ? Icons.refresh : Icons.play_arrow),
-            label: Text(_connected ? 'Kết nối lại' : 'Kết nối'),
+            label: Text(_connected ? tr('reconnect') : tr('connect')),
           ),
           const SizedBox(height: 8),
           SelectableText(
@@ -433,7 +447,7 @@ class _CameraPageState extends State<CameraPage> {
             OutlinedButton.icon(
               onPressed: _measuring ? null : () => _measureLatency(whep),
               icon: const Icon(Icons.timer_outlined),
-              label: const Text('Đo latency (robot: measure_mode.sh on)'),
+              label: Text(tr('measure_latency_btn')),
             ),
             if (_latencyText != null) ...[
               const SizedBox(height: 8),
@@ -466,18 +480,25 @@ class _StateBadge extends StatelessWidget {
       initialData: source.currentState,
       builder: (context, snapshot) {
         final (text, color) = switch (snapshot.data!) {
-          VideoIdle() => ('Chưa kết nối', Colors.grey),
-          VideoConnecting() => ('Đang kết nối…', Colors.blue),
-          VideoPlaying() => ('Đang phát', Colors.green),
+          VideoIdle() => (tr('video_idle'), Colors.grey),
+          VideoConnecting() => (tr('video_connecting'), Colors.blue),
+          VideoPlaying() => (tr('video_playing'), Colors.green),
           VideoReconnecting(:final attempt, :final error) => (
-            'Kết nối lại #$attempt – ${_describe(error)}\n${error.message}',
+            tr('video_reconnecting', {
+              'attempt': attempt,
+              'kind': _describe(error),
+              'message': error.message,
+            }),
             Colors.orange,
           ),
           VideoFailed(:final error) => (
-            'Lỗi: ${_describe(error)}\n${error.message}',
+            tr('video_failed', {
+              'kind': _describe(error),
+              'message': error.message,
+            }),
             Colors.red,
           ),
-          VideoClosed() => ('Đã đóng', Colors.grey),
+          VideoClosed() => (tr('video_closed'), Colors.grey),
         };
         return _Badge(text: text, dotColor: color);
       },
@@ -485,10 +506,10 @@ class _StateBadge extends StatelessWidget {
   }
 
   static String _describe(VideoError error) => switch (error.kind) {
-    VideoErrorKind.stalled => 'đứng hình',
+    VideoErrorKind.stalled => tr('err_stalled'),
     VideoErrorKind.http => 'HTTP ${error.statusCode}',
-    VideoErrorKind.protocol => 'sai định dạng',
-    VideoErrorKind.network => 'mất kết nối',
+    VideoErrorKind.protocol => tr('err_protocol'),
+    VideoErrorKind.network => tr('err_network'),
   };
 }
 
@@ -510,13 +531,13 @@ class _StatsOverlay extends StatelessWidget {
           if (s.jitterBufferMs != null)
             'jb ${s.jitterBufferMs!.toStringAsFixed(0)} ms',
           if (s.packetLoss != null)
-            'mất ${(s.packetLoss! * 100).toStringAsFixed(1)}%',
+            tr('stats_loss', {'pct': (s.packetLoss! * 100).toStringAsFixed(1)}),
         ];
         return _Badge(
           text:
               '${s.fps.toStringAsFixed(1)} fps · '
               '${(s.bitrateKbps / 1000).toStringAsFixed(2)} Mbps · '
-              'gap $gapMs ms · ${s.framesTotal} frame'
+              'gap $gapMs ms · ${tr('stats_frames', {'n': s.framesTotal})}'
               '${rtc.isEmpty ? '' : '\n${rtc.join(' · ')}'}',
           // Tiêu chí: không đứng hình quá 0.5 s.
           dotColor: gapMs > 500 ? Colors.red : Colors.green,

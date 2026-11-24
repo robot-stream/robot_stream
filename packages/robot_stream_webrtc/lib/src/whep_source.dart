@@ -122,7 +122,9 @@ class WhepSource implements VideoSource {
   /// session and switches streams.
   @override
   Future<void> connect(Uri endpoint, {String? token}) async {
-    if (_state is VideoClosed) throw StateError('WhepSource đã dispose');
+    if (_state is VideoClosed) {
+      throw StateError('WhepSource has been disposed');
+    }
     _endpoint = endpoint;
     _token = token;
     final gen = _abortCurrent();
@@ -232,7 +234,7 @@ class WhepSource implements VideoSource {
               finish(
                 VideoError(
                   VideoErrorKind.network,
-                  'ICE disconnected quá ${disconnectGrace.inSeconds} s',
+                  'ICE disconnected for more than ${disconnectGrace.inSeconds} s',
                 ),
               );
             });
@@ -271,7 +273,7 @@ class WhepSource implements VideoSource {
             ? null
             : const VideoError(
                 VideoErrorKind.network,
-                'Không kết nối được ICE',
+                'ICE connection timed out',
               ),
       );
       // If connected before connectTimeout, wait until the session actually ends.
@@ -284,7 +286,7 @@ class WhepSource implements VideoSource {
       return (
         error: VideoError(
           status == null ? VideoErrorKind.protocol : VideoErrorKind.http,
-          status == 404 ? 'Robot chưa có luồng (404)' : e.message,
+          status == 404 ? 'Robot stream not available (404)' : e.message,
           statusCode: status,
         ),
         played: played,
@@ -294,7 +296,7 @@ class WhepSource implements VideoSource {
       return (
         error: VideoError(
           VideoErrorKind.network,
-          'WHEP không phản hồi trong ${connectTimeout.inSeconds} s',
+          'WHEP server did not respond within ${connectTimeout.inSeconds} s',
         ),
         played: played,
       );
@@ -407,7 +409,7 @@ class WhepSource implements VideoSource {
       finish(
         VideoError(
           VideoErrorKind.stalled,
-          'Không có frame mới trong ${stallTimeout.inSeconds} s',
+          'No new frames for ${stallTimeout.inSeconds} s',
         ),
       );
     }

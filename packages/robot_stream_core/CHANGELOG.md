@@ -1,3 +1,7 @@
+## 0.1.1
+
+- Translated `NavProgress.toString()` output from Vietnamese to English.
+
 ## 0.1.0
 
 - Initial release of `robot_stream_core`.
