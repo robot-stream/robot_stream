@@ -30,7 +30,7 @@ Install the required GStreamer, PyGObject, Tornado, and `rosbridge_server` packa
 
 ```bash
 sudo apt update && sudo apt install -y \
-  curl python3-colcon-common-extensions \
+  curl rsync python3-colcon-common-extensions \
   ros-humble-rosbridge-server \
   gstreamer1.0-tools gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly \

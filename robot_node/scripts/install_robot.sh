@@ -37,7 +37,7 @@ fi
 echo "== 1. Checking system & ROS 2 dependencies..."
 MISSING=()
 
-for cmd in curl colcon gst-inspect-1.0; do
+for cmd in curl colcon gst-inspect-1.0 rsync; do
   command -v "$cmd" >/dev/null 2>&1 || MISSING+=("$cmd")
 done
 
@@ -63,7 +63,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
 Install the required packages on Ubuntu 22.04 / ROS 2 $ROS_DISTRO_NAME first:
 
   sudo apt update && sudo apt install -y \\
-    curl python3-colcon-common-extensions \\
+    curl rsync python3-colcon-common-extensions \\
     ros-$ROS_DISTRO_NAME-rosbridge-server \\
     gstreamer1.0-tools gstreamer1.0-plugins-base \\
     gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly \\
