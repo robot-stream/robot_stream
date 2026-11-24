@@ -3,9 +3,9 @@
 <package format="3">
   <name>robot_stream_ros</name>
   <version>0.1.0</version>
-  <description>Stream camera ROS 2 qua WebRTC/WHEP (GStreamer x264 + MediaMTX) cho robot_stream.</description>
+  <description>ROS 2 Humble robot-side gateway for robot_stream: WebRTC/WHEP video (GStreamer x264 + MediaMTX), per-session deadman safety, waypoints, and token-authenticated rosbridge guard.</description>
   <maintainer email="7088549+daoanhtung@users.noreply.github.com">Dao Anh Tung</maintainer>
-  <license>Proprietary</license>
+  <license>BSD-3-Clause</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>

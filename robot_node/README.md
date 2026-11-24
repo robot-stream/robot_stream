@@ -1,156 +1,194 @@
-# robot_node – stream camera WebRTC/WHEP trên robot
+# robot_node (`robot_stream_ros`)
 
-Phía robot của robot_stream: lấy ảnh từ topic ROS 2, nén H.264 bằng CPU, phát WebRTC/WHEP qua MediaMTX.
-Đã chạy và đo trên Wheeltec R550 (Jetson Orin Nano, JetPack 6.2, Ubuntu 22.04, ROS 2 Humble, camera Orbbec Astra).
+Robot-side ROS 2 Humble gateway for [`robot_stream`](../README.md). Runs on any Ubuntu 22.04 + ROS 2 Humble robot (`amd64` or `arm64`) to provide:
+
+- **Low-latency WebRTC/WHEP video (`stream_node` + MediaMTX):** subscribes to a ROS 2 `sensor_msgs/Image` topic, encodes H.264 with GStreamer `x264enc` (`zerolatency` + `vbv-buf-capacity=100` + `sliced-threads=true`), pushes RTP/UDP locally to MediaMTX, and scales to multiple viewers without re-encoding per viewer. Automatically drops to ~1–1.5% idle CPU when no viewer is watching.
+- **Per-session deadman safety (`deadman_node`):** tracks the active controlling client's heartbeat; cancels Nav2 goals and outputs zero `/cmd_vel` if connectivity drops. Also gates manual teleop commands (`/robot_stream/cmd_vel` → `/cmd_vel`) with a 0.3 s command timeout and velocity clamping.
+- **Token-authenticated rosbridge guard (`rosbridge_guard`):** wraps unauthenticated ROS 2 Humble `rosbridge_server` (bound to `127.0.0.1:9090`) on port `9091` with `Authorization: Bearer <token>`, optional TLS (`wss://`), and rotating JSON-line audit logs (`~/robot_stream/audit.log`).
+- **Dynamic waypoints (`waypoints_node`):** publishes named waypoints from a YAML file onto `/robot_stream/waypoints`.
 
 ```
-/camera/color/image_raw (rgb8 640x480, ~30 fps)
-   │  ROS 2, QoS reliable depth 1
+ROS 2 camera topic (rgb8 / bgr8 / rgba8 / bgra8 / mono8)
+   │  QoS auto-matched (depth 1)
    ▼
-stream_node  ── appsrc → videoconvert → x264enc (CPU) → h264parse → rtph264pay ──┐
-                                                            RTP/UDP 127.0.0.1:9000│
-MediaMTX  ◄─────────────────────────────────────────────────────────────────────┘
-   │  WebRTC: HTTP :8889 (WHEP), ICE :8189/udp
-   ▼
-http://<ip-robot>:8889/robot_cam/        (xem bằng trình duyệt)
-http://<ip-robot>:8889/robot_cam/whep    (endpoint WHEP cho app)
+stream_node ──► GStreamer x264enc ──► RTP/UDP 127.0.0.1:9000 ──► MediaMTX
+                                                                    │
+                                   http(s)://<robot-ip>:8889/robot_cam/whep (Bearer token)
+
+ROS 2 Nav2 / odom / battery / cmd_vel
+   │
+   ├── rosbridge_server (127.0.0.1:9090) ◄── rosbridge_guard (:9091, Bearer token + audit log)
+   ├── deadman_node (/robot_stream/heartbeat, /robot_stream/control, /robot_stream/cmd_vel)
+   └── waypoints_node (/robot_stream/waypoints)
 ```
 
-Latency đo 04/11/2026 (từ lúc driver đóng dấu ảnh tới lúc Chrome hiển thị): **p50 66 ms, p95 93 ms**,
-1.3 Mbps, YOLO không chậm đi.
+---
 
-## Cấu trúc
+## Prerequisites (Ubuntu 22.04 + ROS 2 Humble)
 
-| Đường dẫn | Nội dung |
-|---|---|
-| `robot_stream_ros/` | ROS 2 package (ament_python): `stream_node`, `launch/stream.launch.py`, `config/mediamtx.yml` |
-| `systemd/robot-stream.service` | systemd **user** service – tự chạy khi robot đăng nhập màn hình |
-| `scripts/deploy.sh` | (Mac) chép code lên robot + build |
-| `scripts/install_mediamtx.sh` | (robot) tải MediaMTX arm64 + kiểm checksum |
-| `scripts/install_autostart.sh` | (robot) cài và bật service |
-| `scripts/measure_mode.sh on\|off` | (robot) chuyển giữa service và chế độ đo latency |
-| `scripts/measure_load.sh` | (robot) CPU/GPU/RAM + FPS YOLO trong N giây |
-| `scripts/ab_load.sh` | (robot) A/B tải: xen kẽ tắt/bật stream N vòng |
-| `scripts/time_server.py`, `www_server.py` | (robot) phục vụ đo latency tự động |
-
-Trên robot mọi thứ nằm trong `~/robot_stream/`: `mediamtx/`, `ws/` (colcon workspace), `scripts/`, `systemd/`, `www/`, `stream.log`.
-
-## Cài trên robot mới
-
-Yêu cầu: ROS 2 Humble, GStreamer 1.20 có `x264enc`, `rtph264pay`, `videoconvert`, `appsrc`; `python3-gi`; `numpy` (chỉ khi đo).
-Không cần sudo. Kiểm tra nhanh:
+Install the required GStreamer, PyGObject, Tornado, and `rosbridge_server` packages on the robot (`amd64` or `arm64`):
 
 ```bash
-for p in x264enc rtph264pay h264parse videoconvert appsrc; do gst-inspect-1.0 $p >/dev/null && echo "có $p" || echo "THIẾU $p"; done
-python3 -c "import gi; gi.require_version('Gst','1.0'); print('PyGObject OK')"
+sudo apt update && sudo apt install -y \
+  curl python3-colcon-common-extensions \
+  ros-humble-rosbridge-server \
+  gstreamer1.0-tools gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly \
+  python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+  python3-tornado python3-yaml
 ```
 
-1. **Trên Mac** – chép code và build (cần `ssh r550` đăng nhập bằng key, xem `~/.ssh/config`):
-   ```bash
-   robot_node/scripts/deploy.sh r550
-   ```
-2. **Trên robot** – tải MediaMTX:
-   ```bash
-   bash ~/robot_stream/scripts/install_mediamtx.sh
-   ```
-3. **Trên robot** – sửa interface Wifi nếu khác `wlP1p1s0` (`ip -4 -o addr`): dòng `webrtcIPsFromInterfacesList`
-   trong `~/robot_stream/ws/src/robot_stream_ros/config/mediamtx.yml`.
-4. **Trên robot** – chạy thử một lần:
-   ```bash
-   source /opt/ros/humble/setup.bash && source ~/robot_stream/ws/install/setup.bash
-   ros2 launch robot_stream_ros stream.launch.py
-   ```
-   Thấy `stream is available and online` và `5 s: nhận …` là được. Mở `http://<ip-robot>:8889/robot_cam/` để xem. Ctrl+C để dừng.
-5. **Trên robot** – cài tự khởi động:
-   ```bash
-   bash ~/robot_stream/scripts/install_autostart.sh
-   ```
-   Kiểm tra sau `sudo reboot`: `systemctl --user is-active robot-stream` → `active`.
+---
 
-Gỡ: `systemctl --user disable --now robot-stream && rm ~/.config/systemd/user/robot-stream.service`.
+## Quick Install (Any ROS 2 Humble Robot)
 
-## Vận hành
+### Option A: One-command setup (recommended)
+
+Clone the repository on your robot and run the installer script (no `sudo` required once prerequisites are installed):
 
 ```bash
-systemctl --user status robot-stream      # trạng thái
-systemctl --user restart robot-stream     # áp dụng thay đổi code / config
-tail -f ~/robot_stream/stream.log          # log (R550 không lưu journal của user service)
-curl -s http://127.0.0.1:9997/v3/paths/get/robot_cam   # MediaMTX: ready, số người xem
+git clone https://github.com/robot-stream/robot_stream.git
+cd robot_stream
+bash robot_node/scripts/install_robot.sh
 ```
 
-Mỗi 5 s `stream_node` ghi: số frame nhận / đẩy / bỏ, fps, và trễ ROS (driver → node). Nếu camera im > 1 s node gửi
-lại frame cuối ở 2 fps (`giữ frame cuối`) để MediaMTX không đóng phiên người xem.
+The script verifies all dependencies, downloads MediaMTX (`v1.21.3`, auto-detecting `linux_amd64` or `linux_arm64` with SHA-256 verification) into `~/robot_stream/mediamtx/`, copies `robot_stream_ros` into `~/robot_stream/ws/src/`, and runs `colcon build --symlink-install`.
 
-Tham số launch (`ros2 launch robot_stream_ros stream.launch.py <tên>:=<giá trị>`):
+### Option B: Manual step-by-step setup
 
-| Tham số | Mặc định | Ghi chú |
+1. **Install MediaMTX** (auto-detects `amd64`/`arm64`, verifies SHA-256):
+   ```bash
+   bash robot_node/scripts/install_mediamtx.sh
+   ```
+2. **Build `robot_stream_ros` in a colcon workspace:**
+   ```bash
+   mkdir -p ~/robot_stream/ws/src
+   cp -r robot_node/robot_stream_ros ~/robot_stream/ws/src/
+   cd ~/robot_stream/ws
+   source /opt/ros/humble/setup.bash
+   PYTHONNOUSERSITE=1 colcon build --symlink-install
+   ```
+
+---
+
+## Launch & Get Your Bearer Token
+
+Start the gateway with the standard ROS 2 + Nav2 profile (replace `source_topic` with your robot's camera topic):
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/robot_stream/ws/install/setup.bash
+ros2 launch robot_stream_ros stream.launch.py \
+  profile:=nav2_standard \
+  source_topic:=/camera/image_raw
+```
+
+On first launch, a random per-robot bearer token is generated automatically at `~/.config/robot_stream/token` (`chmod 0600`). In another terminal, print the token to enter into the Flutter app:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/robot_stream/ws/install/setup.bash
+ros2 run robot_stream_ros show_token
+```
+
+To verify the video stream in a browser on the same LAN, open `http://<robot-ip>:8889/robot_cam/` (username `robot_stream`, password `<token>`).
+
+> **Already running `rosbridge_server` on port `9090`?** The `nav2_standard` profile starts its own `rosbridge_server` bound strictly to `127.0.0.1:9090`. If your robot already launches `rosbridge_server` on `:9090`, create a custom profile YAML (copied from `config/profiles/nav2_standard.yaml`) with `start_rosbridge: false`, and ideally bind your existing rosbridge to `127.0.0.1`.
+
+---
+
+## Launch Arguments & Profiles
+
+Profiles live in `robot_stream_ros/config/profiles/<profile>.yaml`. Command-line launch arguments override profile values.
+
+| Argument | Default | Description |
 |---|---|---|
-| `source_topic` | `/camera/color/image_raw` | `rgb8`/`bgr8`/`rgba8`/`bgra8`/`mono8` |
-| `fallback_topic` | (rỗng) | dùng khi nguồn chính im > 2 s |
-| `bitrate_kbps` | 1500 | |
-| `encoder_threads` | 2 | chừa CPU cho tác vụ khác |
-| `x264_options` | `vbv-buf-capacity=100 sliced-threads=true` | tốt nhất đã đo |
-| `stamp_barcode` | false | true chỉ khi đo latency |
+| `profile` | `wheeltec_r550` | Profile name (`nav2_standard` for standard ROS 2 + Nav2 robots, `wheeltec_r550` for Wheeltec R550). |
+| `source_topic` | *(from profile)* | Camera `sensor_msgs/Image` topic (`rgb8`, `bgr8`, `rgba8`, `bgra8`, or `mono8`). |
+| `fallback_topic` | `''` | Optional fallback image topic if `source_topic` stalls > 2 s. |
+| `qos` | `auto` | Camera QoS (`auto`, `reliable`, or `best_effort`). `auto` matches the publisher's QoS. |
+| `bitrate_kbps` | `1500` | Target H.264 bitrate in kbps. |
+| `encoder_threads` | `2` | `x264enc` thread count (leaves CPU headroom for Nav2/SLAM/YOLO). |
+| `x264_options` | `vbv-buf-capacity=100 sliced-threads=true` | Low-jitter `x264enc` tuning. |
+| `deadman_timeout_s` | *(from profile)* | Heartbeat timeout before `deadman_node` cancels goals (default `1.0` s). |
+| `auth` | `true` | Require bearer token on `rosbridge_guard` (`:9091`) and WHEP (`:8889`). Set `false` only for local dev. |
+| `tls` | `false` | Enable `wss://` and `https://` using certificates from `make_cert.sh`. |
+| `guard_port` | `9091` | External WebSocket port exposed by `rosbridge_guard`. |
+| `stamp_barcode` | `false` | Overlay 32-bit `header.stamp` barcode for automated latency measurement. |
 
-| `auth` | true | đòi token ở cổng gác rosbridge và WHEP; `false` chỉ khi dev |
-| `tls` | false | `wss://` + `https://` (cần `make_cert.sh`) |
-| `guard_port` | 9091 | cổng gác rosbridge cho app |
+### Network Ports
 
-Cổng mở ra mạng: 8889/tcp (WHEP, cần token), 8189/udp (ICE), 9091/tcp (cổng gác rosbridge, cần token).
-Chỉ localhost: 9000/udp (RTP nội bộ), 9997/tcp (API MediaMTX), 9090/tcp (rosbridge – khi robot_stream tự bật
-nó, hồ sơ `nav2_standard`). Không đụng 8000/8080/9090 của web AIUI trên R550.
+| Port | Bind | Purpose |
+|---|---|---|
+| `8889/tcp` | LAN | MediaMTX WebRTC/WHEP signaling (Bearer token required) |
+| `8189/udp` | LAN | WebRTC ICE media |
+| `9091/tcp` | LAN | `rosbridge_guard` WebSocket proxy (Bearer token + audit log) |
+| `9000/udp` | `127.0.0.1` | Internal H.264 RTP stream (`stream_node` → MediaMTX) |
+| `9997/tcp` | `127.0.0.1` | MediaMTX control API (viewer count for on-demand streaming) |
+| `9090/tcp` | `127.0.0.1` | Local `rosbridge_server` upstream (when `start_rosbridge: true`) |
 
-## Bảo mật
+---
 
-Bản Free có bảo mật **cơ bản**, bật sẵn:
+## Optional Security: Self-Signed TLS + Certificate Pinning
 
-- **Token cho mỗi robot.** Tự tạo ở lần chạy đầu tại `~/.config/robot_stream/token` (quyền 0600). Xem token để nhập
-  vào app: `ros2 run robot_stream_ros show_token`. Đổi token: xóa file rồi `systemctl --user restart robot-stream`.
-- **Cổng gác rosbridge** (`rosbridge_guard`, :9091). rosbridge của ROS 2 Humble không có xác thực, nên app đi qua cổng
-  gác. Cổng gác kiểm `Authorization: Bearer <token>`; sai hoặc thiếu token thì trả 401. Phía app (Dart):
-  `transport.connect(rosbridgeUri(host: ip), token: token)`.
-- **WHEP cần token.** Chỉ chính robot được đẩy luồng; máy khác muốn xem phải gửi `Bearer robot_stream:<token>`
-  (Dart: `mediamtxCredential(token)`).
-- **Audit log** `~/robot_stream/audit.log`: mỗi dòng một bản ghi JSON (thời điểm, IP, mã phiên, lệnh). Ghi kết nối,
-  ngắt, bị từ chối, goal, hủy goal, gọi service, publish lệnh, lượt lái tay (lúc bắt đầu, lúc hết, số lệnh).
-  Heartbeat không ghi. File xoay vòng 5 MB × 3.
-- **TLS (tùy chọn).** Chạy `bash ~/robot_stream/scripts/make_cert.sh` trên robot (in vân tay SHA-256), rồi launch
-  với `tls:=true`. App ghim đúng vân tay đó: `--dart-define=ROBOT_CERT_SHA256=<vân tay>`, hoặc trong Dart dùng
-  `pinnedHttpClient(vânTay)` và `WhepSignaling.pinned(vânTay)`.
-
-**Giới hạn (cần biết):**
-
-- Không bật TLS thì token đi dạng rõ trong Wifi. Cách này chặn được người lỡ tay, app lạ hay sinh viên nghịch,
-  nhưng không chặn được người nghe lén mạng. Dùng ngoài mạng nhà thì bật TLS.
-- Máy nào có ROS 2 trong cùng LAN vẫn publish thẳng qua DDS được (ví dụ `ros2 topic pub /cmd_vel`), không đi qua
-  cổng gác. Robot chạy mọi node trên một máy có thể đặt `ROS_LOCALHOST_ONLY=1`. Phân quyền theo topic bằng SROS2
-  để bản Pro.
-- Robot nào đã có rosbridge riêng mở ra LAN (R550: 9090 do AIUI bật) thì cổng đó vẫn không có token.
-- Đừng mở các cổng này ra internet. Truy cập từ xa (relay, TURN) để bản Pro.
-
-## Đo latency tự động
-
-Đo từ lúc driver đóng dấu ảnh (`header.stamp`) tới lúc frame tới / hiển thị trên máy xem, không cần quay camera.
+Without TLS (`tls:=false`), bearer tokens travel in plaintext over Wi-Fi. Outside trusted private networks, generate a self-signed certificate on the robot and pin its SHA-256 fingerprint in the Flutter app:
 
 ```bash
-ssh r550 '~/robot_stream/scripts/measure_mode.sh on'    # stream có mã vạch + time_server + www_server
-tools/run_latency.sh <nhãn> [giây] ["&jb=0"]           # trên Mac: MJPEG + WebRTC cùng lúc
-ssh r550 '~/robot_stream/scripts/measure_mode.sh off'   # về chạy bình thường
+bash ~/robot_stream/scripts/make_cert.sh
+# Prints the 64-char SHA-256 fingerprint to pass via --dart-define=ROBOT_CERT_SHA256=<sha256>
+
+ros2 launch robot_stream_ros stream.launch.py profile:=nav2_standard tls:=true
 ```
 
-`run_latency.sh` đo độ lệch đồng hồ Mac ↔ robot trước và sau (UDP, ±1.5 ms). Nếu hai số lệch nhau nhiều
-(đồng hồ Mac đang bị chỉnh) thì chỉ tin hiệu số WebRTC − MJPEG, không tin số tuyệt đối.
+To rotate the bearer token, delete `~/.config/robot_stream/token` and restart the launch/service. Command audit logs are written to `~/robot_stream/audit.log` (rotating JSON lines, 5 MB × 3).
 
-Đo tải: `ssh r550 '~/robot_stream/scripts/ab_load.sh 3 20'` – tải nền R550 dao động mạnh nên luôn đo xen kẽ.
+---
 
-## Sự cố đã gặp
+## Optional: Waypoints & Systemd Auto-Start
 
-| Hiện tượng | Nguyên nhân | Cách xử lý |
+### Named Waypoints
+With `profile:=nav2_standard`, `waypoints_node` watches `~/robot_stream/waypoints.yaml` (reloaded every 5 s):
+
+```yaml
+waypoints:
+  "dock": [0.0, 0.0, 0.0]       # [x (m), y (m), yaw (rad)] in map frame
+  "kitchen": [2.5, -1.2, 1.57]
+```
+
+### Systemd User Service (Auto-Start on Boot)
+Edit `robot_node/systemd/robot-stream.service` if you want `profile:=nav2_standard` (the checked-in unit runs the default profile), then install without `sudo`:
+
+```bash
+bash ~/robot_stream/scripts/install_autostart.sh
+systemctl --user status robot-stream
+tail -f ~/robot_stream/stream.log
+```
+
+To remove the service:
+```bash
+systemctl --user disable --now robot-stream && rm ~/.config/systemd/user/robot-stream.service
+```
+
+---
+
+## Wheeltec R550 Reference & Remote Deploy
+
+If you develop on a separate workstation (e.g., macOS/Linux) and deploy to a Wheeltec R550 over SSH:
+
+```bash
+robot_node/scripts/deploy.sh <ssh-host>
+```
+
+The `wheeltec_r550` profile binds MediaMTX ICE candidates to `wlP1p1s0`, connects to the vendor's existing rosbridge on `:9090` (`start_rosbridge: false`), and integrates with `semantic_nav` (`/odom_combined`, `/parsed_commands`, `/semantic_nav_mode`).
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
 |---|---|---|
-| `stream_node` chỉ 17–20 fps, camera 30 fps | QoS best effort (nghi mất mảnh DDS của ảnh 900 KB) | reliable + depth 1 (mặc định): 29.6 fps |
-| Sau khi bật robot: 0 frame, `stream_node` không có trong `ros2 node list` | Dịch vụ chạy trước khi Wifi có IP (nghi DDS chỉ gắn interface có sẵn) | Unit chờ default route; nếu vẫn gặp: `systemctl --user restart robot-stream` |
-| WebRTC trễ ~230 ms, jitter buffer Chrome 120 ms | MPEG-TS: MediaMTX chờ frame sau mới tách frame trước → frame tới dồn cục | RTP thay MPEG-TS (mặc định) |
-| FPS camera tụt 30 → 2–10 (thỉnh thoảng) | Chưa rõ; từng nghi phơi sáng tự động nhưng cảnh tối vẫn đo được 29.6 fps | Theo dõi `5 s: nhận …` trong log |
-| Người xem bị ngắt khi camera khựng | MediaMTX đóng phiên khi nguồn im ~15 s | giữ frame cuối (mặc định) |
-| Trang đo mở từ `file://` báo Failed to fetch | MediaMTX không trả CORS cho Origin `null` | mở qua `http://` (`python3 -m http.server`) |
-| `rtspclientsink` / `rtmp2sink` không dùng được | thiếu `gstreamer1.0-rtsp` (cần sudo); rtmp2sink đòi URL `app/stream` | RTP/UDP |
+| WebRTC stays on `Connecting…` on a robot with Docker or multiple NICs | MediaMTX advertises unreachable ICE candidates (e.g. `docker0`, `l4tbr0`). | Restrict MediaMTX to your Wi-Fi interface: set `webrtc_interfaces: wlan0` (your interface from `ip -4 -o addr`) in your profile YAML, or run with `MTX_WEBRTCIPSFROMINTERFACESLIST=wlan0`. |
+| `rosbridge_server` fails to bind port `9090` | Another `rosbridge_server` is already running on the robot. | Set `start_rosbridge: false` in a custom profile YAML and point `rosbridge_guard` at the existing `:9090`. |
+| `0 frames` received by `stream_node` | Wrong `source_topic` or QoS mismatch, or node started before Wi-Fi had an IP. | Check `ros2 topic list` and pass `source_topic:=/your/topic`. Verify `qos:=auto` (or explicitly set `qos:=best_effort` / `qos:=reliable`). |
+| `Exec format error` when launching MediaMTX | Wrong MediaMTX binary architecture copied between hosts. | Re-run `bash robot_node/scripts/install_mediamtx.sh` directly on the target robot. |
+| High latency or jitter on Android clients | Android Wi-Fi power saving batches incoming UDP packets. | Use `WhepSource(holdLowLatencyWifi: true)` (enabled by default in `robot_stream_webrtc`). |

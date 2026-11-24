@@ -36,24 +36,27 @@ Additional findings on Jetson Orin Nano:
 
 ### 1. Robot Side (`robot_node/`)
 
-Requirements on the robot: ROS 2 Humble, GStreamer 1.20 (`x264enc`, `rtph264pay`, `h264parse`, `videoconvert`, `appsrc`), `python3-gi`, `python3-tornado`, and `rosbridge_server`. Full setup details are in [robot_node/README.md](robot_node/README.md).
+Requirements on the robot (Ubuntu 22.04, `amd64` or `arm64`): ROS 2 Humble, GStreamer 1.20 (`x264enc`, `rtph264pay`, `h264parse`, `videoconvert`, `appsrc`), `python3-gi`, `python3-tornado`, and `rosbridge_server`. Full `apt install`, TLS, and troubleshooting instructions are in [robot_node/README.md](robot_node/README.md).
 
-1. Build `robot_node/robot_stream_ros` in a colcon workspace on the robot (or deploy from your dev machine via `robot_node/scripts/deploy.sh <ssh-host>`).
-2. Download MediaMTX on the robot:
+1. On the robot, clone this repo and run the one-command installer (verifies dependencies, installs MediaMTX for `amd64`/`arm64`, and builds `~/robot_stream/ws`):
    ```bash
-   bash ~/robot_stream/scripts/install_mediamtx.sh
+   git clone https://github.com/robot-stream/robot_stream.git
+   cd robot_stream
+   bash robot_node/scripts/install_robot.sh
    ```
-3. Launch the gateway (use `profile:=nav2_standard` for a standard ROS 2 + Nav2 robot, or `profile:=wheeltec_r550` for Wheeltec R550):
+2. Launch the gateway (use `profile:=nav2_standard` for any standard ROS 2 + Nav2 robot, or `profile:=wheeltec_r550` for Wheeltec R550):
    ```bash
    source /opt/ros/humble/setup.bash
    source ~/robot_stream/ws/install/setup.bash
-   ros2 launch robot_stream_ros stream.launch.py profile:=nav2_standard
+   ros2 launch robot_stream_ros stream.launch.py \
+     profile:=nav2_standard \
+     source_topic:=/camera/image_raw
    ```
-4. Print the robot's auto-generated bearer token:
+3. Print the robot's auto-generated bearer token:
    ```bash
    ros2 run robot_stream_ros show_token
    ```
-5. *(Optional)* Install the user-level systemd service for auto-start on boot:
+4. *(Optional)* Install the user-level systemd service for auto-start on boot:
    ```bash
    bash ~/robot_stream/scripts/install_autostart.sh
    ```
@@ -107,4 +110,4 @@ See [SECURITY.md](SECURITY.md) for security details and vulnerability reporting.
 
 Contributions are welcome—see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The Dart/Flutter packages (`robot_stream_core`, `robot_stream_mjpeg`, `robot_stream_webrtc`, `robot_stream_rosbridge`) are licensed under the **BSD-3-Clause** license (see [LICENSE](LICENSE)).
+The Dart/Flutter packages (`robot_stream`, `robot_stream_core`, `robot_stream_mjpeg`, `robot_stream_webrtc`, `robot_stream_rosbridge`) and `robot_node/robot_stream_ros` are licensed under the **BSD-3-Clause** license (see [LICENSE](LICENSE)).
